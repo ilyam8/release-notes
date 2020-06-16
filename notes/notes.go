@@ -209,14 +209,11 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 
 	var issue *github.Issue
 
-	issues, err := IssueNumbersFromCommit(commit)
-	if err == nil && len(issues) > 0 {
-		issue, err = GetIssue(client, issues[0], opts...)
-		if err != nil {
-			return nil, errors.Wrapf(err, "error prasing release note from commit %s", commit.GetSHA())
+	issue, err = IssueFromPR(client, pr, opts...)
+	if err != nil {
+		if err.Error() == "no matches found when parsing Issue from PR" {
+			fmt.Fprintf(os.Stderr, "no Issue found for #%d\n", *pr.Number)
 		}
-	} else {
-		fmt.Fprintf(os.Stderr, "no associated Issue(s) found for %s\n", commit.GetSHA())
 	}
 
 	/* XXX: Disabled for now since we don't add release notes to commits (yet)
@@ -235,20 +232,42 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 
 	var (
 		areas     []string
+		kinds     []string
 		isFeature bool
 	)
 
-	if HasString(StringsWithPrefix(GetPRLabels(pr), "kind/"), "feature") {
-		isFeature = true
-	} else if issue != nil && !HasString(GetIssueLabels(issue), "bug") {
-		isFeature = true
-	} else {
-		isFeature = false
-	}
-
+	// Grab PR area/ labels (falling back to Issue area/ labels)
 	areas = StringsWithPrefix(GetPRLabels(pr), "area/")
 	if issue != nil && len(areas) == 0 {
 		areas = StringsWithPrefix(GetIssueLabels(issue), "area/")
+	}
+
+	// Grab PR kind/ labels (falling back to Issue kind/ labels)
+	kinds = StringsWithPrefix(GetPRLabels(pr), "kind/")
+	if issue != nil && len(kinds) == 0 {
+		kinds = StringsWithPrefix(GetIssueLabels(issue), "kind/")
+	}
+
+	if HasString(kinds, "feature") {
+		isFeature = true
+	} else if HasString(kinds, "bug") {
+		isFeature = false
+	}
+
+	// Else fallback to looking at Issue labels
+	if issue != nil {
+		issueLabels := GetIssueLabels(issue)
+		if HasString(issueLabels, "feature request") || HasString(issueLabels, "enhancement") {
+			isFeature = true
+			if !HasString(kinds, "feature") {
+				kinds = append(kinds, "feature")
+			}
+		} else if HasString(issueLabels, "bug") {
+			isFeature = false
+			if !HasString(kinds, "bug") {
+				kinds = append(kinds, "bug")
+			}
+		}
 	}
 
 	author := pr.GetUser().GetLogin()
@@ -281,7 +300,7 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 		PrUrl:          prUrl,
 		PrNumber:       pr.GetNumber(),
 		SIGs:           StringsWithPrefix(GetPRLabels(pr), "sig/"),
-		Kinds:          StringsWithPrefix(GetPRLabels(pr), "kind/"),
+		Kinds:          kinds,
 		Areas:          areas,
 		Feature:        IsFeature,
 		Duplicate:      IsDuplicate,
@@ -363,15 +382,13 @@ func ListCommitsWithNotes(
 		}
 
 		// Skip PRs with associated Issues whoose labels contain `no changelog`.
-		if issues, err := IssueNumbersFromCommit(commit); err == nil {
-			if issue, err := GetIssue(client, issues[0], opts...); err == nil {
-				if HasString(GetIssueLabels(issue), "no changelog") {
-					fmt.Fprintf(os.Stderr,
-						"skipping %s with 'no changelog' Issue label in #%d",
-						commit.GetCommit().GetMessage(), *issue.Number,
-					)
-					continue
-				}
+		if issue, err := IssueFromPR(client, pr, opts...); err == nil {
+			if HasString(GetIssueLabels(issue), "no changelog") {
+				fmt.Fprintf(os.Stderr,
+					"skipping pr #d with 'no changelog' Issue label in #%d",
+					*pr.Number, *issue.Number,
+				)
+				continue
 			}
 		}
 
@@ -437,35 +454,33 @@ func ListCommitsWithNotes(
 	return filteredCommits, nil
 }
 
-// IssueNumbersFromCommit return slice of API Issue Request structs given a commit
-// struct. This is useful for going from a commit log to the associated issues
+// IssueFromPR returns an API Issue Request for the first matching
+// Issue that Closes/Fixes or Resolve an Issue from parsing the PR's Body.
+// This is useful for going from a commit log to the associated issues
 // it either addresses, closes or fixes (which contains useful info such
 // the type of issue the Comit/PR was fixing/closing as well as labels specific
 // to the issue and not necessarily the pull request).
-func IssueNumbersFromCommit(commit *github.RepositoryCommit) ([]int, error) {
-	exp := regexp.MustCompile(`(?i)(` + CloseIssueKeywords + `) #?(?P<number>\d+)`)
-	matches := exp.FindAllStringSubmatch(*commit.Commit.Message, -1)
-	if len(matches) == 0 {
-		return nil, errors.New("no matches found when parsing Issues from commit")
-	}
+func IssueFromPR(client *github.Client, pr *github.PullRequest, opts ...githubApiOption) (*github.Issue, error) {
+	c := configFromOpts(opts...)
 
-	var issues []int
+	exp := regexp.MustCompile(`(?i)(` + CloseIssueKeywords + `) #(?P<number>\d+)`)
+	match := exp.FindStringSubmatch(pr.GetBody())
+	if len(match) == 0 {
+		return nil, errors.New("no matches found when parsing Issue from PR")
+	}
+	result := map[string]string{}
 	for i, name := range exp.SubexpNames() {
 		if i != 0 && name != "" {
-			number, err := strconv.Atoi(matches[0][i])
-			if err != nil {
-				return nil, err
-			}
-			issues = append(issues, number)
+			result[name] = match[i]
 		}
 	}
+	number, err := strconv.Atoi(result["number"])
+	if err != nil {
+		return nil, err
+	}
 
-	return issues, nil
-}
-
-// GetIssue return an API Issue struct given an issue number.
-func GetIssue(client *github.Client, number int, opts ...githubApiOption) (*github.Issue, error) {
-	c := configFromOpts(opts...)
+	// Given the PR number that we've now converted to an integer, get the PR from
+	// the API
 	issue, _, err := client.Issues.Get(c.ctx, c.org, c.repo, number)
 	return issue, err
 }
