@@ -29,6 +29,10 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	CloseIssueKeywords = "Close|Closes|Closed|Fix|Fixes|Fixed|Resolve|Resolves|Resolved"
+)
+
 // ReleaseNote is the type that represents the total sum of all the information
 // we've gathered about a single release note.
 type ReleaseNote struct {
@@ -203,6 +207,21 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 		return nil, errors.Wrapf(err, "error parsing release note from commit %s", commit.GetSHA())
 	}
 
+	var issue *github.Issue
+
+	issues, err := IssueNumbersFromCommit(commit)
+	if err == nil {
+		fmt.Fprintf(os.Stderr, "issues: %#v\n", issues)
+
+		if len(issues) > 0 {
+			issue, err = GetIssue(client, issues[0], opts...)
+			if err != nil {
+				return nil, errors.Wrapf(err, "error prasing release note from commit %s", commit.GetSHA())
+			}
+		}
+		fmt.Fprintf(os.Stderr, "issue: #%v\n", issue)
+	}
+
 	/* XXX: Disabled for now since we don't add release notes to commits (yet)
 	text, err := NoteTextFromString(pr.GetBody())
 	if err != nil {
@@ -217,19 +236,37 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 	text = exp.ReplaceAllString(text, "")
 	text = strings.TrimSpace(text)
 
+	var (
+		areas     []string
+		isFeature bool
+	)
+
+	if HasString(StringsWithPrefix(GetPRLabels(pr), "kind/"), "feature") {
+		isFeature = true
+	} else if issue != nil && !HasString(GetIssueLabels(issue), "bug") {
+		isFeature = true
+	} else {
+		isFeature = false
+	}
+
+	areas = StringsWithPrefix(GetPRLabels(pr), "area/")
+	if issue != nil && len(areas) == 0 {
+		areas = StringsWithPrefix(GetIssueLabels(issue), "area/")
+	}
+
 	author := pr.GetUser().GetLogin()
 	authorUrl := fmt.Sprintf("https://github.com/%s", author)
 	prUrl := fmt.Sprintf("https://github.com/netdata/netdata/pull/%d", pr.GetNumber())
-	IsFeature := HasString(LabelsWithPrefix(pr, "kind"), "feature")
+	IsFeature := isFeature
 	IsDuplicate := false
-	sigsListPretty := prettifySigList(LabelsWithPrefix(pr, "sig"))
+	sigsListPretty := prettifySigList(StringsWithPrefix(GetPRLabels(pr), "sig/"))
 	noteSuffix := ""
 
 	if IsActionRequired(pr) || IsFeature {
 		if sigsListPretty != "" {
 			noteSuffix = fmt.Sprintf("Courtesy of %s", sigsListPretty)
 		}
-	} else if len(LabelsWithPrefix(pr, "sig")) > 1 {
+	} else if len(StringsWithPrefix(GetPRLabels(pr), "sig/")) > 1 {
 		IsDuplicate = true
 	}
 	markdown := fmt.Sprintf("%s ([#%d](%s), [@%s](%s))", text, pr.GetNumber(), prUrl, author, authorUrl)
@@ -246,9 +283,9 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 		AuthorUrl:      authorUrl,
 		PrUrl:          prUrl,
 		PrNumber:       pr.GetNumber(),
-		SIGs:           LabelsWithPrefix(pr, "sig"),
-		Kinds:          LabelsWithPrefix(pr, "kind"),
-		Areas:          LabelsWithPrefix(pr, "area"),
+		SIGs:           StringsWithPrefix(GetPRLabels(pr), "sig/"),
+		Kinds:          StringsWithPrefix(GetPRLabels(pr), "kind/"),
+		Areas:          areas,
 		Feature:        IsFeature,
 		Duplicate:      IsDuplicate,
 		ActionRequired: IsActionRequired(pr),
@@ -390,6 +427,39 @@ func ListCommitsWithNotes(
 	return filteredCommits, nil
 }
 
+// IssueNumbersFromCommit return slice of API Issue Request structs given a commit
+// struct. This is useful for going from a commit log to the associated issues
+// it either addresses, closes or fixes (which contains useful info such
+// the type of issue the Comit/PR was fixing/closing as well as labels specific
+// to the issue and not necessarily the pull request).
+func IssueNumbersFromCommit(commit *github.RepositoryCommit) ([]int, error) {
+	exp := regexp.MustCompile(`(?i)(` + CloseIssueKeywords + `) #?(?P<number>\d+)`)
+	matches := exp.FindAllStringSubmatch(*commit.Commit.Message, -1)
+	if len(matches) == 0 {
+		return nil, errors.New("no matches found when parsing Issues from commit")
+	}
+
+	var issues []int
+	for i, name := range exp.SubexpNames() {
+		if i != 0 && name != "" {
+			number, err := strconv.Atoi(matches[0][i])
+			if err != nil {
+				return nil, err
+			}
+			issues = append(issues, number)
+		}
+	}
+
+	return issues, nil
+}
+
+// GetIssue return an API Issue struct given an issue number.
+func GetIssue(client *github.Client, number int, opts ...githubApiOption) (*github.Issue, error) {
+	c := configFromOpts(opts...)
+	issue, _, err := client.Issues.Get(c.ctx, c.org, c.repo, number)
+	return issue, err
+}
+
 // PRFromCommit return an API Pull Request struct given a commit struct. This is
 // useful for going from a commit log to the PR (which contains useful info such
 // as labels).
@@ -420,18 +490,35 @@ func PRFromCommit(client *github.Client, commit *github.RepositoryCommit, opts .
 	return pr, err
 }
 
-// LabelsWithPrefix is a helper for fetching all labels on a PR that start with
-// a given string. This pattern is used often in the k/k repo and we can take
-// advantage of this to contextualize release note generation with the kind, sig,
-// area, etc labels.
-func LabelsWithPrefix(pr *github.PullRequest, prefix string) []string {
+// GetIssueLabels is a helper for fetching all labels on an Issue
+func GetIssueLabels(issue *github.Issue) []string {
 	labels := []string{}
-	for _, label := range pr.Labels {
-		if strings.HasPrefix(*label.Name, prefix) {
-			labels = append(labels, strings.TrimPrefix(*label.Name, prefix+"/"))
-		}
+	for _, label := range issue.Labels {
+		labels = append(labels, *label.Name)
 	}
 	return labels
+}
+
+// GetPRLabels is a helper for fetching all labels on a PR
+func GetPRLabels(pr *github.PullRequest) []string {
+	labels := []string{}
+	for _, label := range pr.Labels {
+		labels = append(labels, *label.Name)
+	}
+	return labels
+}
+
+// StringsWithPrefix is a helper for returning all strings that start with a
+// prefix. This is useful for determining issue and pr labels and categorizing
+// the type of issue or area an issue or pr covers.
+func StringsWithPrefix(xs []string, prefix string) []string {
+	ys := []string{}
+	for _, x := range xs {
+		if strings.HasPrefix(x, prefix) {
+			ys = append(ys, strings.TrimPrefix(x, prefix))
+		}
+	}
+	return ys
 }
 
 // IsActionRequired indicates whether or not the release-note-action-required
