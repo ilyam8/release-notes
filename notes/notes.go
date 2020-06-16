@@ -377,9 +377,15 @@ func ListCommitsWithNotes(
 
 		// Skip PRs with associated Issues whoose labels contain `no changelog`.
 		if issue, err := IssueFromPR(client, pr, opts...); err == nil {
-			if HasString(GetIssueLabels(issue), "no changelog") {
+			if HasString(GetPRLabels(pr), "no changelog") {
 				fmt.Fprintf(os.Stderr,
-					"skipping pr #d with 'no changelog' Issue label in #%d",
+					"skipping pr #d with 'no changelog' PR labels",
+					*pr.Number,
+				)
+				continue
+			} else if HasString(GetIssueLabels(issue), "no changelog") {
+				fmt.Fprintf(os.Stderr,
+					"skipping pr #d with 'no changelog' Issue labels #%d",
 					*pr.Number, *issue.Number,
 				)
 				continue
