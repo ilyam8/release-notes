@@ -210,16 +210,13 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 	var issue *github.Issue
 
 	issues, err := IssueNumbersFromCommit(commit)
-	if err == nil {
-		fmt.Fprintf(os.Stderr, "issues: %#v\n", issues)
-
-		if len(issues) > 0 {
-			issue, err = GetIssue(client, issues[0], opts...)
-			if err != nil {
-				return nil, errors.Wrapf(err, "error prasing release note from commit %s", commit.GetSHA())
-			}
+	if err == nil && len(issues) > 0 {
+		issue, err = GetIssue(client, issues[0], opts...)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error prasing release note from commit %s", commit.GetSHA())
 		}
-		fmt.Fprintf(os.Stderr, "issue: #%v\n", issue)
+	} else {
+		fmt.Fprintf(os.Stderr, "no associated Issue(s) found for %s\n", commit.GetSHA())
 	}
 
 	/* XXX: Disabled for now since we don't add release notes to commits (yet)
@@ -360,7 +357,7 @@ func ListCommitsWithNotes(
 		pr, err := PRFromCommit(client, commit, opts...)
 		if err != nil {
 			if err.Error() == "no matches found when parsing PR from commit" {
-				fmt.Fprintf(os.Stderr, "no PR found for %s\n", commit.GetCommit().GetMessage())
+				fmt.Fprintf(os.Stderr, "no PR found for %s\n", commit.GetSHA())
 				continue
 			}
 		}
@@ -414,7 +411,7 @@ func ListCommitsWithNotes(
 		}
 
 		if excluded {
-			fmt.Fprintf(os.Stderr, "excluding %s\n", commit.GetCommit().GetMessage())
+			fmt.Fprintf(os.Stderr, "excluding %s\n", commit.GetSHA())
 			continue
 		}
 
