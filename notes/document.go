@@ -9,26 +9,28 @@ import (
 
 // Document represents the underlying structure of a release notes document.
 type Document struct {
-	NewFeatures    []string            `json:"new_features"`
-	ActionRequired []string            `json:"action_required"`
-	APIChanges     []string            `json:"api_changes"`
-	Duplicates     map[string][]string `json:"duplicate_notes"`
-	SIGs           map[string][]string `json:"sigs"`
-	BugFixes       []string            `json:"bug_fixes"`
-	Uncategorized  []string            `json:"uncategorized"`
+	NewFeatures      []string `json:"new_features"`
+	ActionRequired   []string `json:"action_required"`
+	DocChanges       []string `json:"api_changes"`
+	PackagingChanges []string
+	Duplicates       map[string][]string `json:"duplicate_notes"`
+	SIGs             map[string][]string `json:"sigs"`
+	BugFixes         []string            `json:"bug_fixes"`
+	Uncategorized    []string            `json:"uncategorized"`
 }
 
 // CreateDocument assembles an organized document from an unorganized set of
 // release notes
 func CreateDocument(notes []*ReleaseNote) (*Document, error) {
 	doc := &Document{
-		NewFeatures:    []string{},
-		ActionRequired: []string{},
-		APIChanges:     []string{},
-		Duplicates:     map[string][]string{},
-		SIGs:           map[string][]string{},
-		BugFixes:       []string{},
-		Uncategorized:  []string{},
+		NewFeatures:      []string{},
+		ActionRequired:   []string{},
+		DocChanges:       []string{},
+		PackagingChanges: []string{},
+		Duplicates:       map[string][]string{},
+		SIGs:             map[string][]string{},
+		BugFixes:         []string{},
+		Uncategorized:    []string{},
 	}
 
 	for _, note := range notes {
@@ -59,6 +61,18 @@ func CreateDocument(notes []*ReleaseNote) (*Document, error) {
 					doc.SIGs[sig] = []string{note.Markdown}
 				}
 			}
+
+			for _, area := range note.Areas {
+				switch area {
+				case "docs":
+					categorized = true
+					doc.DocChanges = append(doc.DocChanges, note.Markdown)
+				case "packaging":
+					categorized = true
+					doc.PackagingChanges = append(doc.PackagingChanges, note.Markdown)
+				}
+			}
+
 			isBug := false
 			for _, kind := range note.Kinds {
 				switch kind {
@@ -69,9 +83,6 @@ func CreateDocument(notes []*ReleaseNote) (*Document, error) {
 					isBug = true
 				case "feature":
 					continue
-				case "api-change", "new-api":
-					categorized = true
-					doc.APIChanges = append(doc.APIChanges, note.Markdown)
 				}
 			}
 
@@ -141,10 +152,19 @@ func RenderMarkdown(doc *Document, w io.Writer) error {
 		write("\n\n")
 	}
 
-	// the "API Changes" section
-	if len(doc.APIChanges) > 0 {
-		write("## API Changes\n\n")
-		for _, note := range doc.APIChanges {
+	// the "Doc Changes" section
+	if len(doc.DocChanges) > 0 {
+		write("## Documentation\n\n")
+		for _, note := range doc.DocChanges {
+			writeNote(note)
+		}
+		write("\n\n")
+	}
+
+	// the "Packaging Changes" section
+	if len(doc.PackagingChanges) > 0 {
+		write("## Packaging / Installation\n\n")
+		for _, note := range doc.PackagingChanges {
 			writeNote(note)
 		}
 		write("\n\n")
