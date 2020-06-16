@@ -1,3 +1,5 @@
-go.mod
-/vendor
+*~
+*.bak
+
 /release-notes
+/cmd/release-notes/release-notes
