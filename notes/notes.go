@@ -15,7 +15,6 @@
 package notes
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -223,12 +222,7 @@ func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Clien
 	}
 	*/
 
-	scanner := bufio.NewScanner(strings.NewReader(commit.GetCommit().GetMessage()))
-	scanner.Scan()
-	text := scanner.Text()
-	exp := regexp.MustCompile(`\(#(?P<number>\d+)\)`)
-	text = exp.ReplaceAllString(text, "")
-	text = strings.TrimSpace(text)
+	text := strings.TrimSpace(pr.GetTitle())
 
 	var (
 		areas     []string
