@@ -365,6 +365,19 @@ func ListCommitsWithNotes(
 			}
 		}
 
+		// Skip PRs with associated Issues whoose labels contain `no changelog`.
+		if issues, err := IssueNumbersFromCommit(commit); err == nil {
+			if issue, err := GetIssue(client, issues[0], opts...); err == nil {
+				if HasString(GetIssueLabels(issue), "no changelog") {
+					fmt.Fprintf(os.Stderr,
+						"skipping %s with 'no changelog' Issue label in #%d",
+						commit.GetCommit().GetMessage(), *issue.Number,
+					)
+					continue
+				}
+			}
+		}
+
 		// exclusionFilters is a list of regular expressions that match commits that
 		// do NOT contain release notes. Notably, this is all of the variations of
 		// "release note none" that appear in the commit log.
