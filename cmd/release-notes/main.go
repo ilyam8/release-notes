@@ -17,10 +17,8 @@ import (
 
 type options struct {
 	githubToken string
-	output      string
 	startSHA    string
 	endSHA      string
-	format      string
 }
 
 func parseOptions(args []string) (*options, error) {
@@ -32,14 +30,6 @@ func parseOptions(args []string) (*options, error) {
 			"github-token",
 			env.String("GITHUB_TOKEN", ""),
 			"A personal GitHub access token (required)",
-		)
-
-		// flOutput contains the path on the filesystem to where the resultant
-		// release notes should be printed.
-		flOutput = flagset.String(
-			"output",
-			env.String("OUTPUT", ""),
-			"The path to the where the release notes will be printed",
 		)
 
 		// flStartSHA contains the commit SHA where the release note generation
@@ -55,13 +45,6 @@ func parseOptions(args []string) (*options, error) {
 			"end-sha",
 			env.String("END_SHA", ""),
 			"The commit hash to end at",
-		)
-
-		// flFormat is the output format to produce the notes in.
-		flFormat = flagset.String(
-			"format",
-			env.String("FORMAT", "markdown"),
-			"The format for notes output (options: markdown, json)",
 		)
 	)
 
@@ -87,10 +70,8 @@ func parseOptions(args []string) (*options, error) {
 
 	return &options{
 		githubToken: *flGitHubToken,
-		output:      *flOutput,
 		startSHA:    *flStartSHA,
 		endSHA:      *flEndSHA,
-		format:      *flFormat,
 	}, nil
 }
 
@@ -127,24 +108,6 @@ func main() {
 		os.Exit(1)
 	}
 	level.Info(logger).Log("msg", "got the commits, performing rendering")
-
-	/*
-		// Open a handle to the file which will contain the release notes output
-		var output *os.File
-		if opts.output != "" {
-			output, err = os.Open(opts.output)
-			if err != nil {
-				level.Error(logger).Log("msg", "error opening the supplied output file", "err", err)
-				os.Exit(1)
-			}
-		} else {
-			output, err = ioutil.TempFile("", "release-notes-")
-			if err != nil {
-				level.Error(logger).Log("msg", "error creating a temporary file to write the release notes to", "err", err)
-				os.Exit(1)
-			}
-		}
-	*/
 
 	doc, err := notes.CreateDocument(releaseNotes)
 	if err != nil {
