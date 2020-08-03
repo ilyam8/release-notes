@@ -463,7 +463,7 @@ func ListCommitsWithNotes(
 func IssueFromPR(client *github.Client, pr *github.PullRequest, opts ...githubApiOption) (*github.Issue, error) {
 	c := configFromOpts(opts...)
 
-	exp := regexp.MustCompile(`(?i)(` + CloseIssueKeywords + `) #(?P<number>\d+)`)
+	exp := regexp.MustCompile(`(?i)(` + CloseIssueKeywords + `).*#(?P<number>\d+)`)
 	match := exp.FindStringSubmatch(pr.GetBody())
 	if len(match) == 0 {
 		return nil, errors.New("no matches found when parsing Issue from PR")
